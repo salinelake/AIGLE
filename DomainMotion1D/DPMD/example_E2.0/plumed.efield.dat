@@ -1,0 +1,31 @@
+# vim:ft=plumed
+
+UNITS LENGTH=A
+########### CV ###########
+dipole: LinearDipoleGroup BONDS=bonds.raw BORNS=borns.raw RESCALE=1.0 ez_gradient GroupAxis=0 ngroups=40 dumpfreq=100
+# vol: VOLUME
+CUSTOM ...
+  LABEL=cv1
+  ARG=dipole.z
+  VAR=z
+  FUNC=-z/16000
+  PERIODIC=NO
+... CUSTOM
+
+########### dipole.ez = (-cv/2.8)*16000       ###########
+CUSTOM ...
+  LABEL=effdp
+  ARG=dipole.ez
+  VAR=zz
+  FUNC=zz/16000
+  PERIODIC=NO
+... CUSTOM
+
+RESTRAINT ARG=dipole.z AT=0.0 SLOPE=-0.19297568506368196 LABEL=efield
+
+PRINT ARG=* STRIDE=50 FILE=COLVAR_RELAX
+
+#endofinput 
+ENDPLUMED
+
+## 	Default unit kJ/mol: 0.0104eV
