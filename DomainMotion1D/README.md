@@ -1,6 +1,12 @@
 # AIGLE
-A very sloppy minimal implementation of AIGLE. Only for reference.  
-
+A minimal implementation of AIGLE, requiring tensorboard for visualization
 ------------
 The folder "DPMD" contains the Deep Potential model and an example for generating the MD data. 
 The folder "data" contains the training data.
+-----------
+Train AIGLE on domain motion data:
+
+tensorboard --logdir ./runs
+python main.py
+
+
