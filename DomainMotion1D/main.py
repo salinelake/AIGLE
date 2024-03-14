@@ -10,7 +10,7 @@ import logging
 ################## system parameters  ##################
 temp = 300
 md_dt=0.002
-stride = 5  # if you change this, change run.py -> noise
+stride = 5  
 smooth = 40
 le_dt = md_dt * stride ## the time step of the data
 ################## dataset parameters ##################

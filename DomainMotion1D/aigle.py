@@ -296,124 +296,10 @@ class aigle0D:
                     ax.plot(np.arange(lmem)*dt, corr_dict['corr_vv']/corr_dict['corr_vv'][0])
                     writer.add_figure('NACF[v(t),v(0)]', fig, i, close=True )
             if i % save_freq == 0 and i>1:
+                print('iter={}, model saved to {}'.format(i, model_folder))
                 self.save_model(model_folder, label=str(i))
-                self.validate(trainset, label=str(i), model_folder=model_folder)
+                # self.validate(trainset, label=str(i), model_folder=model_folder)
  
-    def validate(self, trainset,  nbatch = 10, total_time=100, label='0', model_folder='model' ):
-        dev = self.dev
-        lmem = self.lmem
-        dt = self.dt
-        ################## LOAD DATA  ###########################
-        nset =  len(trainset) 
-        corr_ww = 0
-        corr_nn = 0
-        corr_vv = 0
-        nM = int(20 / self.dt)
-        for setidx in range(nset):
-            dataset= {
-                'v':   th.tensor(trainset[setidx]['v'][lmem:], dtype=th.float32, device=dev),
-                'r':   th.tensor(trainset[setidx]['r'][lmem:], dtype=th.float32, device=dev),
-                'a':   th.tensor(trainset[setidx]['a'][lmem:], dtype=th.float32, device=dev),
-                'e':   th.tensor(trainset[setidx]['e'][lmem:], dtype=th.float32, device=dev),
-                'v_more': th.tensor(trainset[setidx]['v'][1:], dtype=th.float32, device=dev),
-            }
-            potential_force, damp_force  = self.model_ext( dataset['r'],  dataset['v_more'], dataset['e'] )
-            potential_force = potential_force.detach() 
-            damp_force = damp_force.detach()
-            a_pred =  potential_force + damp_force
-            a_ref = dataset['a']
-            noise = a_ref - a_pred
-            with th.no_grad():
-                noise_pred, noise_ref, noise_sigma = self.get_noise( noise.detach() )  ##  (nx, ny, nframes-lmem)
-                white_noise = noise_ref - noise_pred
-            ################## Reference correlation  ###########################
-            corr_ww += Corr_t( white_noise, white_noise, nM) / nset           ## Corr[ w(0), w(t)] 
-            corr_nn += Corr_t( noise, noise, nM) / nset                       ## Corr[ n(0), n(t)]
-            corr_vv += Corr_t( dataset['v'], dataset['v'], nM) / nset     
-        ######################  SIMULATE #########################
-        relax_steps = max(self.lmem+1, self.len_ag+1)
-        r_list = [dataset['r'][[i]].repeat(nbatch) for i in range(relax_steps) ]
-        v_list = [dataset['v'][[i]].repeat(nbatch) for i in range(relax_steps) ]
-        n_list = [noise[[i]].repeat(nbatch) for i in range(relax_steps)]
-        efield = dataset['e'][0] * 1.0
-        total_steps = int(total_time / dt)
-        self.sim_init(r_list, v_list, n_list)
-        for step in range(total_steps - relax_steps):
-            self.sim_step(efield, pop=False)
-            if step % 1000 == 0:
-                print('step:{}'.format(step))
-                print(r_list[-1])
-        ######################  Simulated correlation #########################
-        self.r_list = th.cat([ x.unsqueeze(-1) for x in self.r_list], -1)   #( nbatch, nframes)
-        self.v_list = th.cat([ x.unsqueeze(-1) for x in self.v_list], -1)
-        self.n_list = th.cat([ x.unsqueeze(-1) for x in self.n_list], -1)
-        corr_nn_sim = Corr_t( self.n_list, self.n_list, nM)  
-        corr_vv_sim = Corr_t( self.v_list, self.v_list, nM)
-        ######################  Plot color/white noise correlation  ########################
-        plot_auto = int(2/self.dt)
-        fig, ax = plt.subplots(1,2, figsize=(12,4))
-        kernel = self.model_ext.kernel
-        ax[0].axhline(y=0, color='black', markersize=0)
-        ax[0].plot(np.arange( plot_auto )*dt, corr_nn[:plot_auto] / corr_nn[0], 
-            label=r'$C^{\mathrm{data}}_{RR}$', markersize = 0, linewidth=2)
-        ax[0].plot(np.arange( plot_auto )*dt, corr_ww[:plot_auto] / corr_ww[0], 
-            label=r'$C^{\mathrm{data}}_{ww}$', markersize = 0, linewidth=2)
-        ax[0].plot(np.arange( plot_auto )*dt, corr_nn_sim[:plot_auto] / corr_nn_sim[0], 
-            label=r'$C^{\mathrm{sim}}_{RR}$', markersize = 3, marker='o', linestyle='dashed', linewidth=2)
-        ax[0].plot(np.arange( kernel.size)*dt + 0.5*dt,  kernel / kernel[0], 
-            label=r'$\tilde{K}(\tau)$', markersize = 0, linestyle='dashed', linewidth=2)
-        ax[0].set_xlabel(r'$\tau [ps]$')
-        ax[0].set_ylabel('NACF')
-        ax[0].legend(framealpha=0, fontsize=11)
-        ax[0].set_title('(a)',loc='left')
-        ## inset
-        ins = ax[0].inset_axes([0.2, 0.5, 0.45, 0.43] )
-        ins.tick_params(axis='both', which='major', labelsize=9)
-        ## inset, Fourier corr(n,n) from data
-        corr_nn_fft_data =  np.fft.fft(corr_nn).real 
-        nframes = corr_nn_fft_data.size
-        x_fourier = np.arange(nframes) * 2 * np.pi / nframes / dt  
-        wavenumber = x_fourier / 6 / np.pi * 100
-        ins.plot(wavenumber[wavenumber < 400], corr_nn_fft_data[wavenumber < 400], 
-                markersize=0, linestyle='solid', linewidth=1.5, label='data' )
-        ## inset, Fourier corr(n,n) from AIGLE
-        corr_nn_fft =  np.fft.fft(corr_nn_sim).real 
-        nframes = corr_nn_fft.size
-        x_fourier = np.arange(nframes) * 2 * np.pi / nframes / dt  
-        wavenumber = x_fourier / 6 / np.pi * 100
-        ins.plot(wavenumber[wavenumber < 400], corr_nn_fft[wavenumber < 400], 
-                markersize=0, linestyle='solid', linewidth=1.5, label='GLE' )
-        ###### plot velocity autocorrelation
-        plot_auto = int(2/dt)
-        ax[1].axhline(y=0, color='black', markersize=0)
-        ax[1].plot(np.arange( plot_auto )*dt, corr_vv[:plot_auto] / corr_vv[0], 
-            label='Data', markersize = 0, linewidth=2)
-        ax[1].plot(np.arange( plot_auto )*dt, corr_vv_sim[:plot_auto] / corr_vv_sim[0], 
-            label='Simulated', markersize = 0, linewidth=2)
-        ax[1].set_xlabel(r'$\tau$[ps]')
-        ax[1].set_ylabel('Velocity NACF')
-        ax[1].set_yticks([-0.2,0,0.2,0.4,0.6,0.8,1.0])
-        ax[1].legend(framealpha=0, fontsize=9,loc='lower right' )
-        ax[1].set_ylim(-0.4, 1.1)
-        ax[1].set_title('(b)',loc='left')
-        ###### inset 
-        ins = ax[1].inset_axes([0.2, 0.5, 0.45, 0.43] )
-        ins.tick_params(axis='both', which='major', labelsize=9)
-        ###### inset: Fourier corr(v,v) from data
-        corr_vv_fft_data =  np.fft.fft(corr_vv).real 
-        nframes = corr_vv_fft_data.size
-        x_fourier = np.arange(nframes) * 2 * np.pi / nframes / dt  
-        wavenumber = x_fourier / 6 / np.pi * 100
-        ins.plot(wavenumber[wavenumber < 200], corr_vv_fft_data[wavenumber < 200], 
-        markersize=0, linestyle='solid', linewidth=1.5,  )
-        ###### inset: Fourier corr(v,v) from AIGLE
-        corr_vv_fft =  np.fft.fft(corr_vv_sim).real 
-        nframes = corr_vv_fft.size
-        x_fourier = np.arange(nframes) * 2 * np.pi / nframes / dt  
-        wavenumber = x_fourier / 6 / np.pi * 100
-        ins.plot(wavenumber[wavenumber < 200], corr_vv_fft[wavenumber < 200], 
-                markersize=0, linestyle='solid', linewidth=1.5,  )
-        self.writer.add_figure('Validation]', fig, label, close=True )
  
     def train_force( self, trainset, batchsize=4, epoch=10010 ,  print_freq=100,  save_freq=1000,  
                     model_folder='model' ):
@@ -469,5 +355,6 @@ class aigle0D:
                 ax.legend()
                 writer.add_figure('Free energy surface (noneq)', fig, i, close=True )
             if i % save_freq == 0 and i>1:
+                print('iter={}, model saved to {}'.format(i, model_folder))
                 self.save_model(model_folder, label=str(i))
                 # self.validate(trainset, label=str(i), model_folder=model_folder)
